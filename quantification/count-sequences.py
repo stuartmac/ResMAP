@@ -1,3 +1,14 @@
+"""
+Counts the number of occurrences of each sequence in a library in a BAM file.
+
+Authors: 
+    Stuart MacGowan <smacgowan@dundee.ac.uk>
+    Richard Wall <Richard.Wall@lshtm.ac.uk>
+
+Date:
+    2023-12-16
+"""
+
 import argparse
 import csv
 
