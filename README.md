@@ -1,42 +1,36 @@
 # ResMAP
 
-This repository contains the code for the analysis of the deep mutational screening data from the ResMAP project reported in:
+This repository contains the code for the analysis of the deep mutational screening data from the ResMAP project as detailed in the publication:
 
 "ResMAP – a saturation mutagenesis platform enabling parallel profiling of target-specific resistance conferring mutations in Plasmodium"
 
 by Richard J. Wall, Stuart A. MacGowan, Irene Hallyburton, Sowmya Ajay Castro, Gourav Dey, Rachel Milne, Stephen Patterson, Jody Phelan, Aisha Syed, Natalie Wiedemar and Susan Wyllie
 
-ResMAP is a platform designed to systematically identify mutations in Plasmodium that confer resistance to antimalarial drugs, offering critical insights for the development of novel therapeutics.
+ResMAP aims to identify mutations in Plasmodium that confer resistance to antimalarial drugs, providing insights critical for developing novel therapeutics.
 
 ## Repository Structure
 
-The repository is organised into three main directories: `quantification`, `analysis` and `data`. The `quantification` directory contains the code for library quantification, the `analysis` directory contains the code for the analysis of the deep mutational screening data, and the `data` directory contains the library summary data from the deep mutational screening.
+The `quantification`, `analysis`, and `data` directories in this repository encompass the entire workflow from data quantification to analysis:
+- `quantification`: Contains `count-sequences.py` for library quantification.
+- `analysis`: R Markdown notebooks for data analysis.
+- `data`: Includes raw and processed data files.
 
 ## Data
 
-data/
-├── PfKRS-mutlib-final-calculations-706_231117.tsv  # library counts for compound 706
-├── PfKRS-mutlib-final-calculations-clado_231117.tsv  # library counts for cladosporin
-├── PfKRS-mutlib-final-calculations-wildtype_231117.tsv  # library counts pre-selection
-├── PkmutWTd1_1pc-counts.tsv
-├── PkmutWTd1_1pc.sam  # sample sequencing data
-├── PkmutWTd1_1pc.sam.bai
-├── codon-table.tsv  # resource for Rmd analysis
-├── mutlib-1187736dfa7e94e0c60d8ef17aa56979.tsv
-└── pfkrs-n20-library.csv  # library design file for quantification
+The `data` directory structure is as follows:
+- `PfKRS-mutlib-final-calculations-*.tsv`: Library counts for various conditions.
+- `PkmutWTd1_1pc.sam`: Sample sequencing data.
+- `pfkrs-n20-library.csv`: Library design file.
 
 ## Quantification
 
-The python script for library quantification is located in the `quantification` directory. The script `count-sequences.py` is used to count the occurence of each mutant in the library. Further details on the script and its usage can be found in the [README](quantification/README.md) in the `quantification` directory.
+`count-sequences.py` in the `quantification` directory is used for counting mutants. See the [quantification README](quantification/README.md) for usage details.
 
-## Analysis 
+## Analysis
 
-The R Markdown notebooks for the analysis of the deep mutational screening data are located in the `analysis` directory. The notebooks are numbered in the order they should be run, and further details on each notebook can be found in the [README](analysis/README.md) in the `analysis` directory.
+R Markdown notebooks in the `analysis` directory outline the analysis workflow. Numbered sequentially, these notebooks are detailed in the [analysis README](analysis/README.md), with rendered versions available for viewing.
 
-Rendered versions of the notebooks can also be found in the `analysis` directory. These notebooks contain the results of the analysis and can be viewed directly in the browser through GitHub.
+## License
 
-# License
-
-This project code is open source and available under the [MIT License](LICENSE).
-[]: # (end)
+This repository is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 ```
