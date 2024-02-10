@@ -1,0 +1,276 @@
+---
+title: "04_mutlib-edgeR"
+author: "Stuart MacGowan"
+date: "`r Sys.Date()`"
+output: github_document
+---
+
+In this document we use edgeR to calculate post-treatment enrichment. Since we found that
+the libraries for both drugs were very similar, we treat each drug as a replicate in order
+for edgeR to calculate significance.
+
+```{r Setup, include=FALSE}
+# # install edgeR from bioconductor
+# if (!requireNamespace("BiocManager", quietly = TRUE))
+#     install.packages("BiocManager")
+# BiocManager::install("edgeR")
+
+library(edgeR)
+library(dplyr)
+library(readr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(plotly)
+library(ggridges)
+
+options(dplyr.summarise.inform=F)
+
+
+# Read pre-processed dataset
+path <- c("../data/mutlib-1187736dfa7e94e0c60d8ef17aa56979.tsv")
+mutlib <-
+  readr::read_delim(path, delim = "\t", escape_double = FALSE, trim_ws = TRUE,)
+
+# mutation_type colour scheme okabe-ito named vector
+# > palette.colors(palette = "Okabe-Ito")
+mutation_type_colours <- c("Wildtype" = "#E69F00",
+                           "Stop" = "#56B4E9",
+                           "Synonymous" = "#009E73",
+                           "Mutant" = "#D3D3D3",  # or #999999
+                           "Resistance" = "#CC79A7"
+                           )
+
+# dedupe mutlib on sequence
+mutlib |>
+  group_by(condition) |>
+  distinct(Sequence, .keep_all = TRUE) ->
+  mutlib
+
+# filter postions 0 and 21
+mutlib |>
+  filter(position != 0, position != 21) ->
+  mutlib
+
+# Amino acid labels three letter to one letter
+aa_labels <- c("Ala" = "A",
+               "Arg" = "R",
+               "Asn" = "N",
+               "Asp" = "D",
+               "Cys" = "C",
+               "Gln" = "Q",
+               "Glu" = "E",
+               "Gly" = "G",
+               "His" = "H",
+               "Ile" = "I",
+               "Leu" = "L",
+               "Lys" = "K",
+               "Met" = "M",
+               "Phe" = "F",
+               "Pro" = "P",
+               "Ser" = "S",
+               "Thr" = "T",
+               "Trp" = "W",
+               "Tyr" = "Y",
+               "Val" = "V")
+
+# mutate to one letter amino acid
+position_offset <- 327
+mutlib |>
+  mutate(wildtype_residue_x = aa_labels[wildtype_residue],
+         amino_acid_x = aa_labels[amino_acid],
+         site = position + position_offset,
+         mutation_label = paste0(wildtype_residue_x, site, amino_acid_x)) ->
+  mutlib
+
+
+mutlib
+```
+
+## EdgeR Control vs. Drugged
+
+```{r edgeR analysis}
+# Pivot to wide format with Count for each Condition
+mutlib |>
+  select(-dataset) |>
+  # filter(mutation_type != "Stop") |>  # remove stop codons
+  group_by(condition, mutation_label, mutation_type) |> summarise(Count = sum(Count), Name = first(Name)) |>  # mutant level
+  # filter(mutation_type == "Mutant") |> group_by(condition, position) |> summarise(Count = sum(Count), Name = first(Name)) |>  # site level
+  pivot_wider(names_from = condition, values_from = Count) |>
+  mutate_if(is.numeric, ~replace_na(., 0)) -> mutlib_wide
+
+# EdgeR
+# Create a DGEList object. Create a dataframe with rownames = Name
+input <- mutlib_wide |>
+  tibble::column_to_rownames("Name") |>  # gene level
+  select(Control, Cladosporin, `706`)
+
+x <- as.matrix(input)
+group <- factor(c(1, 2, 2))  # control vs. drugged
+y <- DGEList(counts = x, group = group)
+keep <- filterByExpr(y)
+y <- y[keep, , keep.lib.sizes = FALSE]
+y <- normLibSizes(y)
+design <- model.matrix(~group)
+y <- estimateDisp(y, design)
+
+# likelihood ratio test
+fit <- glmFit(y, design)
+lrt <- glmLRT(fit, coef = 2)
+topTags(lrt)
+
+# Sort hits to see highest enriched mutants
+topTags(lrt, n = nrow(y))$table |>
+  arrange(desc(logFC)) |>
+  tibble::rownames_to_column("Name") |>
+  left_join(mutlib[mutlib$dataset == 1, c("Name", "mutation", "mutation_label", "mutation_type")],
+            by = c("Name" = "Name")) |>
+  mutate(padj = p.adjust(PValue, method = "BH")) ->
+  results
+results
+
+
+# Median synonymous FC
+results |>
+  filter(mutation_type == "Synonymous") |>
+  pull(logFC) |>
+  median() ->
+  median_synonymous_fc
+
+# Volcano plot
+results |>
+  arrange(desc(logFC)) |>  # sort by logFC, to help with labelling
+  ggplot(aes(x = logFC, y = -log10(padj), colour = mutation_type, label = mutation_label)) +
+  geom_hline(yintercept = -log10(0.01), linetype = 2) +
+  geom_vline(xintercept = c(-1, 1), linetype = 2) +
+  geom_vline(xintercept = median_synonymous_fc, linetype = 3,
+             colour = mutation_type_colours["Synonymous"]) +
+  geom_point(alpha = 0.5) +
+  # # label highly significant mutants
+  geom_point(data = results |> filter(mutation_type == "Mutant" & padj < 0.0001 & logFC > 5),
+             colour = "#CC79A7") +
+  geom_text(data = results |> filter(mutation_type != "Stop" & padj < 0.0001 & logFC > 5),
+            nudge_y = c(0.1, 0.1, 0.1, -0.1, -0.11, 0.1, 0.1, 0.1),
+            nudge_x = c(-0.1, -0.1, -0.1, 0.6, 0.6, -0.1, -0.1, -0.1),
+            size = 3, check_overlap = FALSE, colour = "#CC79A7") +
+  scale_colour_manual(values = mutation_type_colours, limits = names(mutation_type_colours),
+                      guide = guide_legend(title = "Mutation type")) +
+  guides(colour = FALSE) +
+  theme(legend.position = "none") +
+  theme_bw() +
+  theme(aspect.ratio = 1) ->
+  volcano_plot
+volcano_plot
+
+# Save SVG
+ggsave("figures/04-edgeR-volcano.svg", plot = volcano_plot,
+       width = 7.5, height = 7.5, units = "cm")
+
+# Save interactive plot
+htmlwidgets::saveWidget(
+                widget = ggplotly(volcano_plot), #the plotly object
+                file = "figures/04-edgeR-volcano.html", #the path & file name
+                selfcontained = TRUE #creates a single html file
+                )
+
+# save table
+results  |>
+  select(Name, mutation, mutation_label, mutation_type, logFC, PValue, padj) |>
+  mutate(FC = 2^logFC) |>
+  write_csv("results/04-edgeR-treatment-enrichments.csv")
+
+
+# Merge with manually calculated FC
+mutlib_table <- read_csv("results/03-compound-enrichments.csv")
+results |>
+  right_join(mutlib_table, by = c("mutation" = "mutation")) ->
+  mutlib_table_merged
+
+# save table
+mutlib_table_merged  |>
+  select(mutation_label, `706`, Cladosporin, logFC, padj, minimal_edit_distance) |>
+  write_csv("results/04-results-summary.csv")
+```
+
+### Finer detail
+
+The next cell creates individual volcano plots for each site.
+
+```{r Individual site plots}
+results |>
+  left_join(mutlib[mutlib$dataset == 1, c("Name", "residue", "position")],
+            by = c("Name" = "Name")) |>
+  # filter(position == 17) |>
+  ggplot(aes(x = logFC, y = -log10(padj), colour = mutation_type, label = mutation_label)) +
+  facet_wrap(~position+residue) +
+  geom_hline(yintercept = -log10(0.05), linetype = 2) +
+  geom_vline(xintercept = c(-1, 1), linetype = 2) +
+  geom_vline(xintercept = median_synonymous_fc, linetype = 3,
+             colour = mutation_type_colours["Synonymous"]) +
+  geom_point(alpha = 0.5) +
+  scale_colour_manual(values = mutation_type_colours) +
+  theme(legend.position = "none") +
+  theme_bw() ->
+  # theme(aspect.ratio = 1) ->  # not implemented for plotly
+  site_plot
+
+# Save interactive plot
+htmlwidgets::saveWidget(
+                widget = ggplotly(site_plot), #the plotly object
+                file = "figures/edgeR-volcano-all-sites.html", #the path & file name
+                selfcontained = TRUE  # creates a single html file
+                )
+
+```
+
+## Further visualisation
+
+### Mapping results to 3D structure
+
+The results can be visualised on 3D structure with approporiate mapping. The following cell
+creates a UCSF Chimera attribute file that can be used to colour PDB 4pg3 or 6hcu.
+
+```{r Visualise site level summary on  structure}
+results |>
+  left_join(mutlib[mutlib$dataset == 1, c("Name", "position")],
+            by = c("Name" = "Name")) |>  # join position
+  filter(padj < 0.05) |>
+  # select highest enriched mutant per position
+  group_by(position, mutation_type) |>
+  filter(logFC == max(logFC)) |>
+  arrange(desc(logFC)) ->
+  site_summary
+site_summary
+
+# Chimera attribute format
+# Example:
+# #
+# #  PDB entry 121p (H-ras) residue sidechain percent exposure 
+# #  (solvent-accessible area relative to Gly-X-Gly state)
+# #  courtesy of Getarea server, http://curie.utmb.edu/getarea.html
+# #
+# #  Use this file to assign the attribute in ChimeraX or Chimera.
+# #
+# attribute: percentExposed
+# match mode: 1-to-1
+# recipient: residues
+# 	:1	32.4
+# 	:2	46.2
+# 	:3	52.5
+# 	:4	4.4
+# 	:5	22.1
+# 	:6	0.0
+
+# Create attribute file for Chimera
+site_offset <- 327
+site_summary |>
+  filter(mutation_type == "Mutant") |>
+  mutate(max_site_logFC = logFC) |>
+  ungroup() |>
+  select(position, max_site_logFC) |>
+  mutate(position = paste0("\t:", position + site_offset)) |>
+  unite("attribute", position, max_site_logFC, sep = "\t") |>
+  mutate(attribute = paste0(attribute)) |>
+  select(attribute) |>
+  write.table("extra/04-chimera.defattr", quote = FALSE, row.names = FALSE, col.names = FALSE)
+```
