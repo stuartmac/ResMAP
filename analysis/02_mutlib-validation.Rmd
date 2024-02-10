@@ -1,0 +1,154 @@
+---
+title: "02_mutlib-validation"
+author: "Stuart MacGowan"
+date: '`r Sys.Date()`'
+output: github_document
+---
+
+# Introduction
+
+The mutlib data is a Plasmodium KRS deep mutational scanning experiment designed to identify potential resistance mutants against wildtype inhibitors. The data contains 3 experiments, 1 control and 2 treatment conditions.
+
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggridges)
+
+options(dplyr.summarise.inform=F)
+
+# Read pre-processed dataset
+path <- c("../data/mutlib-1187736dfa7e94e0c60d8ef17aa56979.tsv")
+mutlib <-
+  readr::read_delim(path, delim = "\t", escape_double = FALSE, trim_ws = TRUE,)
+
+# mutation_type colour scheme okabe-ito named vector
+mutation_type_colours <- c("Wildtype" = "#E69F00",
+                           "Stop" = "#56B4E9",
+                           "Synonymous" = "#009E73",
+                           "Mutant" = "#D3D3D3",  # or #999999
+                           "Resistance" = "#CC79A7"
+                           )
+mutlib
+```
+
+# Results
+
+## Comparing pre- and post-selection libraries
+
+```{r pre vs. post selection density plots}
+# Control Median
+mutlib |>
+  filter(condition == "Control") |>
+  group_by(condition) |> mutate(CPM = (Count / sum(Count) * 10^6)) |>
+  pull(CPM) |>
+  median() ->
+  control_median
+
+mutlib |>
+  # Rename treatment 1_Control: Pre-selection, 2_Cladosporin: Low dose, 1_Cladosporin: High dose
+  mutate(treatment = factor(condition, levels = c("Control", "706", "Cladosporin"),
+                            labels = c("Pre-selection", "DDD01510706", "Cladosporin"))) |>
+  filter(position != 0 & position != 21) |>
+  filter(mutation_type != "Wildtype") |>
+  # Counts per million
+  group_by(condition) |> mutate(CPM = (Count / sum(Count) * 10^6)) |>
+  mutate(mutation_type = factor(mutation_type, levels = c("Stop", "Mutant", "Synonymous"))) |>
+  
+  # reduce mutation type to Synonymous and Non-synonymous
+  mutate(mutation_type = ifelse(mutation_type %in% c("Stop", "Mutant"), "Non-synonymous", "Synonymous")) |>
+  ggplot(aes(x = CPM, fill = mutation_type, colour = mutation_type)) +
+  geom_density(colour = "black", alpha = 0.5, bw = 0.4) +
+  geom_rug(alpha = 0.5) +
+  geom_vline(xintercept = control_median, linetype = 2,
+             colour = "black") +
+  # facet_grid(condition ~ batch, scales = "free_y", labeller = ) +
+  facet_grid(treatment ~ ., scales = "free_y", labeller = ) +
+  # scale_x_log10() +
+  scale_x_log10(breaks = c(1, 10, 100, 1000, 10000, 100000),
+                labels = c("", "10", "", "1,000", "", "100,000"),
+                minor_breaks = NULL, ) +
+  scale_fill_manual(values = mutation_type_colours) +
+  scale_colour_manual(values = mutation_type_colours) +
+  xlab("Counts per million") +
+  ylab("Desnity") +
+  guides(fill = FALSE, colour = FALSE) +
+  theme_bw() +
+  theme(aspect.ratio = 0.33, axis.text.x = element_text(angle = 30)) ->
+  density_plot
+density_plot
+
+
+# Save SVG
+ggsave("figures/02-density-plot.svg", plot = density_plot,
+       width = 7.5, height = 7.5, units = "cm")
+
+```
+
+## Basic statistics
+
+```{r Total library sizes foreach dataset}
+mutlib |>
+  # de-duplicate sequences because wildtype is duplicated
+  distinct(dataset, Sequence, .keep_all = TRUE) |>
+  group_by(condition) |>
+  summarize(total_count = sum(Count))
+```
+
+
+```{r Summary stats for Count by position}
+mutlib |>
+  filter(!is_wildtype) |>  # exclude wildtype sequence
+  group_by(condition, position) |>
+  summarize(min = min(Count),
+            max = max(Count),
+            mean = mean(Count),
+            median = median(Count),
+            sd = sd(Count),
+            n = n()) |>
+  arrange(condition, position)
+```
+
+
+```{r Manhatten style plot}
+mutlib |>
+  # Shift position by 0.2 to distinguish the wildtype residues
+  mutate(position = position + -0.4 * (-0.5 * is_wildtype_residue)) |>
+  ggplot(aes(x = position, y = Count, colour = is_wildtype_residue)) +
+  facet_grid(condition ~ .) +
+  geom_point() +
+  scale_y_log10() +
+  # scale_x_continuous(breaks = 0:21, labels = unique(mutlib$residue))
+  guides(colour = FALSE) +
+  theme_bw()
+```
+
+## Potential codon bias
+
+```{r codon bias ridge plot}
+codon_rank_control <- mutlib |>
+  filter(position != 0 & position != 21) |>
+  filter(mutation_type != "Wildtype") |>
+  filter(condition == "Control") |>
+  group_by(codon) |>
+  summarise(mean_count = mean(Count)) |>
+  arrange(desc(mean_count))
+
+mutlib |>
+  filter(position != 0 & position != 21) |>
+  filter(mutation_type != "Wildtype") |>
+  filter(condition == "Control") |>
+  mutate(codon = factor(codon, levels = codon_rank_control$codon)) |>
+  mutate(gc_content = stringr::str_count(codon, "G|C") / 3) |>
+  ggplot(aes(x = Count, y = codon, fill = gc_content)) +
+  geom_density_ridges(scale = 2, rel_min_height = 0.001) +
+  scale_y_discrete(expand = c(0, 0), guide = guide_axis(n.dodge=4)) +     # will generally have to set the `expand` option
+  scale_x_log10(expand = c(0, 0)) +
+  coord_cartesian(clip = "off") + # to avoid clipping of the very top of the top ridgeline
+  guides(fill = FALSE) +
+  theme_ridges()
+
+ggsave('figures/02-codon-ridge-plot.svg', width = 12, height = 20, units = 'cm')
+```
+
