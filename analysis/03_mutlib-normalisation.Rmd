@@ -1,0 +1,196 @@
+---
+title: "03_mutlib-normalisation"
+author: "Stuart MacGowan"
+date: "`r Sys.Date()`"
+output: github_document
+---
+
+This notebook identifies putative resistance alleles from deep mutagenesis screening. 
+
+```{r setup, include=FALSE}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(stringdist)
+
+# Read pre-processed dataset
+path <- c("../data/mutlib-1187736dfa7e94e0c60d8ef17aa56979.tsv")
+mutlib <-
+  read_delim(path, delim = "\t", escape_double = FALSE, trim_ws = TRUE,)
+
+
+# mutation_type colour scheme okabe-ito named vector
+mutation_type_colours <- c("Wildtype" = "#E69F00",
+                           "Stop" = "#56B4E9",
+                           "Synonymous" = "#009E73",
+                           "Mutant" = "#D3D3D3",  # or #999999
+                           "Resistance" = "#CC79A7"
+                           )
+mutlib
+```
+
+
+## Normalisation
+
+This scheme normalises by total library size and relative to the pre-selection library, in
+accord with RW's design.
+
+```{r Normalisation}
+# dedupe mutlib on sequence
+mutlib |>
+  group_by(condition) |>
+  distinct(Sequence, .keep_all = TRUE) ->
+  mutlib
+
+# filter postions 0 and 21
+mutlib |>
+  filter(position != 0, position != 21) ->
+  mutlib
+
+
+# Step 1: Library proportions
+mutlib |>
+  # filter(!is_wildtype) |>
+  filter(position != 0 & position != 21) |>
+  group_by(condition) |>
+  # use norm_control already calculated
+  mutate(lib_prop = Count / sum(Count)) ->
+  mutlib
+
+# Step 2: Normalise treatments (datasets 2 and 3) to wildtype (dataset 1)
+mutlib |>
+  # filter(!is_wildtype) |>
+  filter(position != 0 & position != 21) |>
+  group_by(position, codon) |>
+  # use norm_control already calculated
+  mutate(rw_norm = lib_prop / lib_prop[dataset == 1]) ->
+  mutlib
+
+mutlib |>
+  arrange(desc(rw_norm)) |>
+  head(10)
+
+mutlib |>
+  mutate(position = position + -0.4 * (-0.5 * is_wildtype_residue)) |>  # dodge
+  ggplot(aes(x = position, y = rw_norm, colour = mutation_type)) +
+  facet_grid(condition ~ .) +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  geom_point() +
+  # scale_y_log10 with nice log ticks
+  scale_y_log10(breaks = c(0.001, 0.01, 0.1, 1, 10, 100, 1000),
+                labels = c("0.001", "0.01", "0.1", "1", "10", "100", "1000")) +
+  scale_colour_manual(values = mutation_type_colours) +
+  guides(colour = FALSE) +
+  theme_bw()
+
+# Key sites
+mutlib |>
+  # filter(residue %in% c("Val328", "Asn339", "Phe342", "Ser344")) |>
+  filter(residue %in% c("Ser344")) |>
+  filter(condition != "Control") |>
+  mutate(amino_acid = factor(amino_acid, levels = c("Arg", "His", "Lys", "Asp", "Glu", "Asn", "Gln", "Ser", "Thr", "Ala", "Gly", "Cys", "Pro", "Tyr", "Phe", "Trp", "Val", "Ile", "Leu", "Met", "Stop"))) |>
+  mutate(position = position + -0.4 * (-0.5 * is_wildtype_residue)) ->  # dodge
+  plot_data
+plot_data
+
+plot_data |>
+  ggplot(aes(x = amino_acid, y = rw_norm, colour = mutation_type)) +
+  facet_grid(condition ~ residue) +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  geom_point() +
+  # overplot > 2 mutations pink
+  geom_point(data = mutlib |> filter(residue == "Ser344" & mutation_type == "Mutant" & rw_norm > 2),
+             colour = "#CC79A7") +
+  # scale_y_log10 with nice log ticks
+  scale_y_log10(breaks = c(0.001, 0.01, 0.1, 1, 10, 100, 1000),
+                labels = c("0.001", "0.01", "0.1", "1", "10", "100", "1000")) +
+  scale_colour_manual(values = mutation_type_colours) +
+  guides(colour = FALSE) +
+  xlab("Mutant") +
+  ylab("Post-selection Enrichment") +
+  theme_bw() +
+  theme(aspect.ratio = 0.2) -> p
+p
+
+```
+
+### Further normalisation
+
+```{r Additional synonymous normalisation}
+# Step 3: Normalise by synonymous variants
+mutlib |>
+  # filter(!is_wildtype) |>
+  filter(position != 0 & position != 21) |>
+  group_by(condition, position) |>
+  # use norm_control already calculated
+  mutate(rw_norm_synonymous = rw_norm / median(rw_norm[is_wildtype_residue])) ->  # max is an option too
+  mutlib
+
+
+# position 17
+mutlib |>
+  # filter(residue %in% c("Val328", "Asn339", "Phe342", "Ser344")) |>
+  filter(residue %in% c("Phe342")) |>
+  filter(condition != "Control") |>
+  mutate(amino_acid = factor(amino_acid, levels = c("Arg", "His", "Lys", "Asp", "Glu", "Asn", "Gln", "Ser", "Thr", "Ala", "Gly", "Cys", "Pro", "Tyr", "Phe", "Trp", "Val", "Ile", "Leu", "Met", "Stop"))) |>
+  mutate(position = position + -0.4 * (-0.5 * is_wildtype_residue)) ->  # dodge
+  plot_data
+plot_data
+
+plot_data |>
+  ggplot(aes(x = amino_acid, y = rw_norm_synonymous, colour = mutation_type)) +
+  facet_grid(condition ~ residue) +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  geom_point() +
+  # overplot > 2 mutations pink
+  geom_point(data = mutlib |> filter(residue == "Phe342" & mutation_type == "Mutant" & rw_norm_synonymous > 2),
+             colour = "#CC79A7") +
+  # scale_y_log10 with nice log ticks
+  scale_y_log10(breaks = c(0.001, 0.01, 0.1, 1, 10, 100, 1000),
+                labels = c("0.001", "0.01", "0.1", "1", "10", "100", "1000")) +
+  scale_colour_manual(values = mutation_type_colours) +
+  guides(colour = FALSE) +
+  xlab("Mutant") +
+  ylab("Post-selection Enrichment") +
+  theme_bw() +
+  theme(aspect.ratio = 0.2) -> p
+p
+
+# save plot
+ggsave("figures/03-Phe342.svg", p, width = 15, height = 15, units = "cm", dpi = 300)
+
+
+```
+
+### Tabulate results
+
+```{r Summary table}
+# Table for manuscript
+mutlib |>
+  select(condition, mutation, rw_norm) |>
+  filter(condition != "Control") |>
+  group_by(condition, mutation) |>
+  summarise(enrichment = round(mean(rw_norm), digits = 1)) |>
+  filter(enrichment > 2) |>
+  spread(condition, enrichment) ->
+  # arrange(desc(`706`)) ->
+  mutlib_table
+
+# Add minimal nucleotide changes
+mutlib |>
+  select(mutation, wildtype_codon, codon) |>
+  mutate(edit_distance = stringdist::stringdist(wildtype_codon, codon, method = "hamming")) |>
+  group_by(mutation) |>
+  summarise(minimal_edit_distance = min(edit_distance)) -> minimal_edit_distance
+
+mutlib_table |>
+  left_join(minimal_edit_distance) ->
+  mutlib_table
+
+# save table
+mutlib_table |>
+  write_csv("results/03-compound-enrichments.csv")
+
+mutlib_table
+```
