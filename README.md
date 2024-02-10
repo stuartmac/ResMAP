@@ -2,9 +2,7 @@
 
 This repository contains the code for the analysis of the deep mutational screening data from the ResMAP project as detailed in the publication:
 
-"ResMAP – a saturation mutagenesis platform enabling parallel profiling of target-specific resistance conferring mutations in Plasmodium"
-
-by Richard J. Wall, Stuart A. MacGowan, Irene Hallyburton, Sowmya Ajay Castro, Gourav Dey, Rachel Milne, Stephen Patterson, Jody Phelan, Aisha Syed, Natalie Wiedemar and Susan Wyllie
+ - Richard J. Wall, Stuart A. MacGowan, Irene Hallyburton, Sowmya Ajay Castro, Gourav Dey, Rachel Milne, Stephen Patterson, Jody Phelan, Aisha Syed, Natalie Wiedemar and Susan Wyllie. *ResMAP – a saturation mutagenesis platform enabling parallel profiling of target-specific resistance conferring mutations in Plasmodium.* Submitted.
 
 ResMAP aims to identify mutations in Plasmodium that confer resistance to antimalarial drugs, providing insights critical for developing novel therapeutics.
 
