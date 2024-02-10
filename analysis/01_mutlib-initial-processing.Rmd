@@ -1,0 +1,122 @@
+---
+title: "01_mutlib-initial-processing"
+author: "Stuart MacGowan"
+date: "`r Sys.Date()`"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+library(readr)
+library(dplyr)
+library(stringr)
+library(tidyr)
+# library(tidytable)
+library(stringdist)
+
+
+# # codon table
+# # https://www.bioinformatics.org/sms2/genetic_code.html
+# codon_table <- tibble(codon = c("TTT", "TTC", "TTA", "TTG", "CTT", "CTC", "CTA", "CTG", "ATT", "ATC", "ATA", "ATG", "GTT", "GTC", "GTA", "GTG", "TCT", "TCC", "TCA", "TCG", "CCT", "CCC", "CCA", "CCG", "ACT", "ACC", "ACA", "ACG", "GCT", "GCC", "GCA", "GCG", "TAT", "TAC", "TAA", "TAG", "CAT", "CAC", "CAA", "CAG", "AAT", "AAC", "AAA", "AAG", "GAT", "GAC", "GAA", "GAG", "TGT", "TGC", "TGA", "TGG", "CGT", "CGC", "CGA", "CGG", "AGT", "AGC", "AGA", "AGG", "GGT", "GGC", "GGA", "GGG"),
+#                       amino_acid = c("F", "F", "L", "L", "L", "L", "L", "L", "I", "I", "I", "M", "V", "V", "V", "V", "S", "S", "S", "S", "P", "P", "P", "P", "T", "T", "T", "T", "A", "A", "A", "A", "Y", "Y", "*", "*", "H", "H", "Q", "Q", "N", "N", "K", "K", "D", "D", "E", "E", "C", "C", "*", "W", "R", "R", "R", "R", "S", "S", "R", "R", "G", "G", "G", "G"))
+
+# load codon table from data sheet
+codon_table <- read_delim("../data/codon-table.tsv",
+                          delim = "\t", escape_double = FALSE,
+                          trim_ws = TRUE, col_names = c("amino_acid", "codon"), 
+                          col_types = cols("amino_acid" = col_character(),
+                                           "codon" = col_character()))
+```
+
+
+```{r Initial data processing}
+# Read the datasets
+paths <- c("../data/PfKRS-mutlib-final-calculations-wildtype_231117.tsv",
+           "../data/PfKRS-mutlib-final-calculations-clado_231117.tsv",
+           "../data/PfKRS-mutlib-final-calculations-706_231117.tsv")
+
+# Read the datasets
+mutlib <- paths |>
+  tidytable::map_dfr(read_delim, delim = "\t", escape_double = FALSE,
+          trim_ws = TRUE, col_types = cols("Name" = col_character(), "Sequence" = col_character(), "Count" = col_double()), .id = "dataset")
+
+# Parse Name column to get codon and position
+# format is KRS[position][codon], examples: KRS1TTT, KRS20ATG
+# codon is last 3 characters, position is the number between KRS and codon
+mutlib <- mutlib |>
+  mutate(codon = str_sub(Name, -3, -1),
+         position = as.numeric(str_sub(Name, 4, -4)))
+
+# replace NA in position with 0 (KRS_1[codon])
+mutlib$position[is.na(mutlib$position)] <- 0
+
+# Translate codons to amino acids
+mutlib <- mutlib |>
+  left_join(codon_table, by = "codon") |>
+  relocate(amino_acid, .after = codon)
+
+
+# Validate
+# Codon should be 3 characters long and only contain A, T, G, or C
+stopifnot(str_length(mutlib$codon) == 3)
+stopifnot(all(str_detect(mutlib$codon, "[ATGC]")))
+
+# Position should be a number between 0 and 21
+stopifnot(all(mutlib$position >= 0 & mutlib$position <= 21))
+
+# Expect 64 codons at each position, once each per dataset
+stopifnot(ncol(table(mutlib$position, mutlib$codon)) == 64)
+stopifnot(all(table(mutlib$position, mutlib$codon) == length(paths)))
+
+# Mark the wildtype codons
+# Here's the sequence from 0 to 21:
+# AAA	GTA	TTT	AGA	AAT	GAA	GGT	ATA	GAT	AAT	ACA	CAT	AAT	CCT	GAA	TTT	ACT	TCG	TGT	GAA	TTT	TAT
+wildtype_codon_sequence <- c("AAA", "GTA", "TTT", "AGA", "AAT", "GAA", "GGT", "ATA", "GAT", "AAT", "ACA", "CAT", "AAT", "CCT", "GAA", "TTT", "ACT", "TCG", "TGT", "GAA", "TTT", "TAT")
+
+mutlib <- mutlib |>
+  mutate(wildtype_codon = wildtype_codon_sequence[position + 1],
+         is_wildtype = codon == wildtype_codon)
+
+# Add a column for the wildtype amino acid
+wildtype_residue_sequence <- mutlib |>
+  filter(dataset == 1, is_wildtype) |>
+  arrange(position) |>
+  pull(amino_acid)
+
+mutlib <- mutlib |>
+  mutate(wildtype_residue = wildtype_residue_sequence[position + 1],
+         is_wildtype_residue = amino_acid == wildtype_residue)
+
+# Validate wildtype
+stopifnot(all(table(mutlib$is_wildtype, mutlib$is_wildtype_residue)[2, ] == c(0, 66)))
+
+# Label conditions
+mutlib$condition <- factor(mutlib$dataset, levels = 1:3,
+                           labels = c("Control", "Cladosporin", "706"))
+
+# Add a single column that labels wildtype, synonymous, non-synonymous or stop
+mutlib <- mutlib |>
+  mutate(mutation_type = case_when(is_wildtype ~ "Wildtype",
+                                   is_wildtype_residue ~ "Synonymous",
+                                   amino_acid == "Stop" ~ "Stop",
+                                   TRUE ~ "Mutant"))
+
+# Add residue labels
+offset = 327
+mutlib <- mutlib |>
+  mutate(residue = paste0(wildtype_residue, position + offset),
+         mutation = paste0(residue, amino_acid))
+
+# Write to file with hash for reproducibility
+hash <- digest::digest(mutlib)
+write_delim(mutlib, paste0("../data/mutlib-", hash, ".tsv"), delim = "\t")
+
+mutlib
+```
+
+
+```{r Log success}
+# Report where we save the file, what the hash was and other file stats
+cat("Saved to ../data/mutlib-", hash, ".tsv\n", sep = "")
+cat("Number of rows: ", nrow(mutlib), "\n")
+cat("Number of columns: ", ncol(mutlib), "\n")
+```
